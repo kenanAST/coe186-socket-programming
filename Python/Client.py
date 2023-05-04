@@ -6,6 +6,7 @@ from Crypto.Cipher import AES
 PORT = 8080
 SERVER = "192.168.1.5"
 ADDR = (SERVER, PORT)
+NAME = socket.gethostname()
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect(ADDR)
 
@@ -34,8 +35,8 @@ def receive():
 
 def send():
     while not stop_event.is_set():
-        message = str(input(""))
-
+        message = str(f'[{NAME}]: {input("")}')
+        
         encrypted_message = encrypt(message)
         client.send(encrypted_message)
 
