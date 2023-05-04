@@ -34,7 +34,7 @@ def receive():
 
 def send():
     while not stop_event.is_set():
-        message = input("")
+        message = str(input(""))
 
         encrypted_message = encrypt(message)
         client.send(encrypted_message)
