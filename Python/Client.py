@@ -28,7 +28,7 @@ stop_event = threading.Event()
 
 def receive():
     while not stop_event.is_set():
-        message = client.recv(1024)
+        message = client.recv(2048)
         decrypted_message = decrypt(message)
         print(f"{decrypted_message}")
 
@@ -36,7 +36,6 @@ def receive():
 def send():
     while not stop_event.is_set():
         message = str(f'[{NAME}]: {input("")}')
-        
         encrypted_message = encrypt(message)
         client.send(encrypted_message)
 

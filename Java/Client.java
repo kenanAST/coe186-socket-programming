@@ -8,7 +8,7 @@ import java.util.Arrays;
 import java.util.Scanner;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-
+import java.net.InetAddress;
 import javax.crypto.BadPaddingException;
 
 public class Client {
@@ -22,6 +22,7 @@ public class Client {
     private OutputStream output;
     private ExecutorService executorService;
     private boolean running;
+
 
     public Client() {
         try {
@@ -66,12 +67,21 @@ public class Client {
 
     private void send() {
         Scanner scanner = new Scanner(System.in);
+        String hostname;
+        try {
+            hostname = InetAddress.getLocalHost().getHostName();
+        }
+        catch (UnknownHostException e) {
+            System.err.println("Unknown host: " + SERVER);
+            System.exit(1);
+            return;
+        }
         while (running) {
             String message = scanner.nextLine();
+            message = "[" + hostname + "]: " + message;
             byte[] encrypted;
             try {
                 encrypted = AES.encrypt(message.getBytes(), key.getBytes());
-                System.out.println("Encrypted: "+ encrypted);
             }
             catch (BadPaddingException e) {
                 System.err.println("You have the wrong key.");

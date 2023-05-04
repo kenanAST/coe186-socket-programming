@@ -1,9 +1,8 @@
 #include <iostream>
 #include <cstring>
-#include <cstdlib>
-#include <pthread.h>
+#include <thread>
+#include <openssl/aes.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 
@@ -12,72 +11,102 @@ using namespace std;
 #define PORT 8080
 #define SERVER "192.168.1.5"
 
-int client_fd;
-pthread_t receive_thread, send_thread;
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-int stop_event = 0;
+// 16-byte secret key for AES encryption/decryption
+unsigned char key[] = "0123456789abcdef";
 
-void *receive(void *arg) {
-    while (!stop_event) {
-        char buffer[64];
-        memset(buffer, 0, sizeof(buffer));
-        cout << endl;
-        int recv_len = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
-        if (recv_len > 0) {
-            buffer[recv_len] = '\0';
-            cout << buffer;
-        } else {
-            stop_event = 1;
-            break;
-        }
-    }
-    pthread_exit(NULL);
+// padding function for the message
+string pad(const string& s) {
+    size_t block_size = AES_BLOCK_SIZE;
+    size_t pad_len = block_size - s.length() % block_size;
+    char pad_char = static_cast<char>(pad_len);
+    string padded = s;
+    padded.append(pad_len, pad_char);
+    return padded;
 }
 
-void *send_msg(void *arg) {
-    while (!stop_event) {
-        char buffer[64];
-        memset(buffer, 0, sizeof(buffer));
-        cout << "Enter message: ";
-        fgets(buffer, sizeof(buffer), stdin);
-        size_t len = strlen(buffer);
-        if (len > 0 && buffer[len - 1] == '\n') {
-            buffer[len - 1] = '\0';
-        }
-        len = strlen(buffer);
-        pthread_mutex_lock(&mutex);
-        int send_len = send(client_fd, buffer, len, 0);
-        if (send_len < 0) {
-            stop_event = 1;
-            pthread_mutex_unlock(&mutex);
-            break;
-        }
-        pthread_mutex_unlock(&mutex);
+// encryption function
+string encrypt(const string& message) {
+    string padded_message = pad(message);
+    size_t message_length = padded_message.length();
+    unsigned char encrypted_message[message_length];
+    AES_KEY aes_key;
+    AES_set_encrypt_key(key, 128, &aes_key);
+    for (size_t i = 0; i < message_length; i += AES_BLOCK_SIZE) {
+        AES_encrypt((const unsigned char*)padded_message.c_str() + i,
+                    encrypted_message + i, &aes_key);
     }
-    pthread_exit(NULL);
+    return string((char*)encrypted_message, message_length);
+}
+
+// decryption function
+string decrypt(const string& message) {
+    size_t message_length = message.length();
+    unsigned char decrypted_message[message_length];
+    AES_KEY aes_key;
+    AES_set_decrypt_key(key, 128, &aes_key);
+    for (size_t i = 0; i < message_length; i += AES_BLOCK_SIZE) {
+        AES_decrypt((const unsigned char*)message.c_str() + i,
+                    decrypted_message + i, &aes_key);
+    }
+    size_t pad_len = decrypted_message[message_length - 1];
+    return string((char*)decrypted_message, message_length - pad_len);
+}
+
+char hostname[1024];
+string NAME = "client";
+int client_fd;
+
+string receive() {
+    char buffer[2048];
+    int valread = read(client_fd, buffer, sizeof(buffer));
+    string message(buffer, valread);
+    string decrypted_message = decrypt(message);
+    return decrypted_message;
+}
+
+void send_messages() {
+    while (true) {
+        string message;
+        getline(cin, message);
+        message = "[" + NAME + "]: " + message;
+        string encrypted_message = encrypt(message);
+        send(client_fd, encrypted_message.c_str(), encrypted_message.length(), 0);
+    }
+}
+
+void client_thread() {
+    struct sockaddr_in server_addr;
+    memset(&server_addr, '0', sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    inet_pton(AF_INET, SERVER, &server_addr.sin_addr);
+    if (connect(client_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0){
+        cerr << "Connection Failed" << endl;
+        exit(1);
+    }
+
+    while (true) {
+        string message = receive();
+        cout << message << endl;
+    }
 }
 
 int main() {
-    struct sockaddr_in server_addr;
-
     client_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (client_fd == -1) {
+        cerr << "Socket creation failed" << endl;
+        return 1;
+    }
 
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = inet_addr(SERVER);
-    server_addr.sin_port = htons(PORT);
+    gethostname(hostname, 1024);
+    NAME = hostname;
 
-    connect(client_fd, (struct sockaddr *)&server_addr, sizeof(server_addr));
+    thread client(client_thread);
+    thread sender(send_messages);
 
-    pthread_create(&receive_thread, NULL, receive, NULL);
-    pthread_create(&send_thread, NULL, send_msg, NULL);
-
-    while (!stop_event) {}
-
-    pthread_cancel(receive_thread);
-    pthread_cancel(send_thread);
+    client.join();
+    sender.join();
 
     close(client_fd);
-
     return 0;
 }
