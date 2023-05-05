@@ -1,126 +1,132 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+#include <stdlib.h>
+#include <stdbool.h>
 #include <unistd.h>
-#include <pthread.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/socket.h>
 #include <openssl/aes.h>
 
 #define PORT 8080
-#define SERVER "192.168.1.5"
-#define KEY_SIZE 128
+#define SERVER "192.168.1.6"
 
+// 16-byte secret key for AES encryption/decryption
+unsigned char key[] = "0123456789abcdef";
+
+// padding function for the message
+char *pad(const char *s) {
+    size_t block_size = AES_BLOCK_SIZE;
+    size_t pad_len = block_size - strlen(s) % block_size;
+    char pad_char = (char)pad_len;
+    char *padded = malloc(strlen(s) + pad_len + 1);
+    strcpy(padded, s);
+    memset(padded + strlen(s), pad_char, pad_len);
+    padded[strlen(s) + pad_len] = '\0';
+    return padded;
+}
+
+// encryption function
+char *encrypt_message(const char *message) {
+    char *padded_message = pad(message);
+    size_t message_length = strlen(padded_message);
+    unsigned char encrypted_message[message_length];
+    AES_KEY aes_key;
+    AES_set_encrypt_key(key, 128, &aes_key);
+    for (size_t i = 0; i < message_length; i += AES_BLOCK_SIZE) {
+        AES_encrypt((const unsigned char*)padded_message + i,
+                    encrypted_message + i, &aes_key);
+    }
+    char *result = malloc(message_length + 1);
+    memcpy(result, encrypted_message, message_length);
+    result[message_length] = '\0';
+    free(padded_message);
+    return result;
+}
+
+// decryption function
+char *decrypt_message(const char *message) {
+    size_t message_length = strlen(message);
+    unsigned char decrypted_message[message_length];
+    AES_KEY aes_key;
+    AES_set_decrypt_key(key, 128, &aes_key);
+    for (size_t i = 0; i < message_length; i += AES_BLOCK_SIZE) {
+        AES_decrypt((const unsigned char*)message + i,
+                    decrypted_message + i, &aes_key);
+    }
+    size_t pad_len = decrypted_message[message_length - 1];
+    char *result = malloc(message_length - pad_len + 1);
+    memcpy(result, decrypted_message, message_length - pad_len);
+    result[message_length - pad_len] = '\0';
+    return result;
+}
+
+char hostname[1024];
+char *NAME = "client";
 int client_fd;
-pthread_t receive_thread, send_thread;
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-int stop_event = 0;
-AES_KEY aes_key;
 
-// Encrypt plaintext using AES-128 ECB mode
-void aes_encrypt(char *plaintext, int plaintext_len, unsigned char *ciphertext) {
-    AES_ecb_encrypt((unsigned char*)plaintext, ciphertext, &aes_key, AES_ENCRYPT);
+char *receive() {
+    char buffer[2048];
+    int valread = read(client_fd, buffer, sizeof(buffer));
+    char *message = malloc(valread + 1);
+    memcpy(message, buffer, valread);
+    message[valread] = '\0';
+    char *decrypted_message = decrypt_message(message);
+    free(message);
+    return decrypted_message;
 }
 
-// Decrypt ciphertext using AES-128 ECB mode
-void aes_decrypt(unsigned char *ciphertext, int ciphertext_len, char *plaintext) {
-    AES_ecb_encrypt(ciphertext, (unsigned char*)plaintext, &aes_key, AES_DECRYPT);
+void send_messages() {
+    while (true) {
+        char message[2048];
+        fgets(message, sizeof(message), stdin);
+        message[strlen(message) - 1] = '\0';  // remove the newline character
+        char *formatted_message = malloc(strlen(message) + strlen(NAME) + 4);
+        sprintf(formatted_message, "[%s]: %s", NAME, message);
+        char *encrypted_message = encrypt_message(formatted_message);
+        send(client_fd, encrypted_message, strlen(encrypted_message), 0);
+        free(formatted_message);
+        free(encrypted_message);
+    }
 }
 
-void *receive_msg(void *arg) {
-    while (!stop_event) {
+void client_thread() {
+    struct sockaddr_in server_addr;
+    memset(&server_addr, '0', sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    inet_pton(AF_INET, SERVER, &server_addr.sin_addr);
+    if (connect(client_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0){
+        fprintf(stderr, "Connection Failed\n");
+        exit(1);
+    }
+
+    while (1) {
         char buffer[2048];
-        memset(buffer, 0, sizeof(buffer));
-        int recv_len = recv(client_fd, buffer, sizeof(buffer), 0);
-        if (recv_len < 0) {
-            stop_event = 1;
-            break;
-        } else if (recv_len == 0) {
-            continue;
-        }
-        int num_blocks = recv_len / 16;
-        if (recv_len % 16 != 0) {
-            num_blocks++;
-        }
-        char *decrypted = malloc(recv_len);
-        memset(decrypted, 0, recv_len);
-        for (int i = 0; i < num_blocks; i++) {
-            unsigned char block[16];
-            memset(block, 0, sizeof(block));
-            int block_len = (i == num_blocks - 1) ? recv_len % 16 : 16;
-            memcpy(block, buffer + i * 16, block_len);
-            aes_decrypt(block, 16, decrypted + i * 16);
-        }
-        printf("%s\n", decrypted);
-        free(decrypted);
+        int valread = read(client_fd, buffer, sizeof(buffer));
+        char* message = decrypt_message(buffer);
+        printf("%s\n", message);
+        free(message);
     }
-    pthread_exit(NULL);
 }
-
-
-
-
-void *send_msg(void *arg) {
-    while (!stop_event) {
-        char buffer[64];
-        memset(buffer, 0, sizeof(buffer));
-        fgets(buffer, sizeof(buffer), stdin);
-        size_t len = strlen(buffer);
-        if (len > 0 && buffer[len - 1] == '\n') {
-            buffer[len - 1] = '\0';
-        }
-        size_t num_blocks = (len + AES_BLOCK_SIZE - 1) / AES_BLOCK_SIZE;
-        char *encrypted = malloc(num_blocks * AES_BLOCK_SIZE);
-        memset(encrypted, 0, num_blocks * AES_BLOCK_SIZE);
-        for (size_t i = 0; i < num_blocks; i++) {
-            char block[AES_BLOCK_SIZE];
-            memset(block, 0, AES_BLOCK_SIZE);
-            size_t block_len = i < num_blocks - 1 ? AES_BLOCK_SIZE : len % AES_BLOCK_SIZE;
-            memcpy(block, buffer + i * AES_BLOCK_SIZE, block_len);
-            aes_encrypt(block, AES_BLOCK_SIZE, (unsigned char *)(encrypted + i * AES_BLOCK_SIZE));
-        }
-        pthread_mutex_lock(&mutex);
-        int send_len = send(client_fd, encrypted, num_blocks * AES_BLOCK_SIZE, 0);
-        if (send_len < 0) {
-            stop_event = 1;
-            pthread_mutex_unlock(&mutex);
-            break;
-        }
-        pthread_mutex_unlock(&mutex);
-        free(encrypted);
-    }
-    pthread_exit(NULL);
-}
-
-
 
 
 int main() {
-    struct sockaddr_in server_addr;
-
-    char *key = "0123456789abcdef";
-    if (AES_set_encrypt_key((unsigned char*)key, KEY_SIZE, &aes_key) < 0) {
-        perror("Failed to set encryption key");
-        exit(EXIT_FAILURE);
+    client_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (client_fd == -1) {
+        fprintf(stderr, "Socket creation failed\n");
+        return 1;
     }
 
-    client_fd = socket(AF_INET, SOCK_STREAM, 0);
+    gethostname(hostname, 1024);
+    NAME = hostname;
 
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = inet_addr(SERVER);
-    server_addr.sin_port = htons(PORT);
-
-    connect(client_fd, (struct sockaddr *)&server_addr, sizeof(server_addr));
-
-    pthread_create(&receive_thread, NULL, receive_msg, NULL);
-    pthread_create(&send_thread, NULL, send_msg, NULL);
-
-    pthread_join(receive_thread, NULL);
-    pthread_join(send_thread, NULL);
+    pthread_t client_thread_id;
+    pthread_t sender_thread_id;
+    pthread_create(&client_thread_id, NULL, client_thread, NULL);
+    pthread_create(&sender_thread_id, NULL, send_messages, NULL);
+    pthread_join(client_thread_id, NULL);
+    pthread_join(sender_thread_id, NULL);
 
     close(client_fd);
-
     return 0;
 }

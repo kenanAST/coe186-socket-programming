@@ -9,7 +9,7 @@
 using namespace std;
 
 #define PORT 8080
-#define SERVER "192.168.1.5"
+#define SERVER "192.168.1.6"
 
 // 16-byte secret key for AES encryption/decryption
 unsigned char key[] = "0123456789abcdef";
@@ -41,15 +41,16 @@ string encrypt(const string& message) {
 // decryption function
 string decrypt(const string& message) {
     size_t message_length = message.length();
-    unsigned char decrypted_message[message_length];
+    unsigned char decrypted_message[message_length + AES_BLOCK_SIZE];  // allocate buffer of max possible size
     AES_KEY aes_key;
     AES_set_decrypt_key(key, 128, &aes_key);
     for (size_t i = 0; i < message_length; i += AES_BLOCK_SIZE) {
         AES_decrypt((const unsigned char*)message.c_str() + i,
                     decrypted_message + i, &aes_key);
     }
-    size_t pad_len = decrypted_message[message_length - 1];
-    return string((char*)decrypted_message, message_length - pad_len);
+    size_t pad_len = decrypted_message[message_length + AES_BLOCK_SIZE - 1];  // retrieve pad length from last byte
+    size_t actual_length = message_length - pad_len;  // calculate actual length of decrypted message
+    return string((char*)decrypted_message, actual_length);  // return decrypted message with actual length
 }
 
 char hostname[1024];

@@ -14,6 +14,8 @@ public class AES {
         SecretKeySpec secretKey = new SecretKeySpec(key, "AES");
         Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
         cipher.init(Cipher.DECRYPT_MODE, secretKey);
+        System.out.println("ciphertext: " + cipher.doFinal(ciphertext));
         return cipher.doFinal(ciphertext);
     }
+    
 }

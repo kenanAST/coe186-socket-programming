@@ -14,7 +14,7 @@ import javax.crypto.BadPaddingException;
 public class Client {
     private static final int PORT = 8080;
     private static final String SERVER = "192.168.1.5";
-    private static final int BUFFER_SIZE = 64;
+    private static final int BUFFER_SIZE = 2048;
     private static final String key = "0123456789abcdef";
 
     private Socket clientSocket;
@@ -50,15 +50,18 @@ public class Client {
                     try {
                         byte[] decrypted = AES.decrypt(receivedBytes, key.getBytes());
                         System.out.println(new String(decrypted));
+                    } catch (BadPaddingException e){
+                        continue;
                     } catch (Exception e) {
                         System.err.println("Error decrypting message: " + e);
                         stop();
-                    }
+                    } 
                 }
             } catch (IOException e) {
                 System.err.println("Error receiving message from server");
                 stop();
-            }
+            } 
+            
         }
     }
     
