@@ -20,10 +20,15 @@ Before running the server and clients, ensure that you have the following softwa
      ```
    - C and C++: Install OpenSSL on your system. Refer to the OpenSSL documentation or your system's package manager for installation instructions.
    - Java: No additional dependencies required.
-3. Compile the C and C++ clients using the OpenSSL library. For example, to compile the C client:
-gcc client.c -o client -lssl -lcrypto
+3. Compile the C and C++ clients using the OpenSSL library. 
+   To compile the C client:
+   ```
+   gcc client.c -o client -lssl -lcrypto
+   ```
 
-To compile the C++ client:
-g++ client.cpp -o client -lssl -lcrypto
+   To compile the C++ client:
+   ```
+   g++ client.cpp -o client -lssl -lcrypto
+   ```
 
 4. Modify the server and client configurations as needed. For example, you can change the server port number or the IP address in the client scripts.
